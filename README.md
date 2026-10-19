@@ -12,7 +12,7 @@ and topology fixes, layered on a pinned fork of crdesigner.
 ## Layout
 
 - `convert.py` — single-file OpenDRIVE → Lanelet2 CLI
-- `convert_l2.py` — single-file Lanelet2 → OpenDRIVE CLI (reverse direction, CARLA); `validate_xodr.py`, `roundtrip_xodr.py` — its checks
+- `convert_l2.py` — single-file Lanelet2 → OpenDRIVE CLI (reverse direction, CARLA); `validate_xodr.py`, `roundtrip_xodr.py`, `carla_import_check.py` — its checks; `carla_demo.py` — recorded CARLA demo
 - `demo_evan.py` — batch conversion over `sample_data/`
 - `utils/` — geometry, postprocessing, config, and the `validate.py` requirement checker
 - `sample_data/` — input `.xodr` maps; `output/` — generated `.osm` (gitignored)
@@ -66,8 +66,11 @@ uv run --python olconversion/bin/python roundtrip_xodr.py ~/Downloads/r01/lanele
 Options: `--frame local` (default: map-centred coordinates near the origin, geoReference
 with `lat_0/lon_0` for CARLA GNSS) or `--frame mgrs` (x/y identical to Autoware
 `local_x/local_y`); `--proj` / `--projector-info` to override the projection;
-`--plan-view`, `--no-piecewise-width`, `--no-resample`, `--no-merge-junctions`,
+`--plan-view`, `--no-piecewise-width`, `--no-resample`, `--no-rebuild-junctions`, `--stub-len`, `--no-merge-junctions`,
 `--no-sanitize-adjacency`, `--no-strip-z`, `--no-validate`, `--no-roundtrip`, `--keep-cr`.
+Junctions are rebuilt from the lanelet graph for CARLA (its reader ignores `laneLink`s and
+its Traffic Manager crashes on cr2odr's junction layout); `carla_import_check.py <map.xodr>`
+verifies the import against a running CARLA server (needs the `carla` client wheel).
 Design notes: `docs/arch/l2_to_odr.md`; full procedure (setup, stages, acceptance, CARLA
 import, fork workflow, troubleshooting): `docs/l2_to_odr_procedure.md`.
 

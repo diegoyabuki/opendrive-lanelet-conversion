@@ -46,6 +46,7 @@ from utils.l2_projection import (
 )
 from utils.map_origin import write_map_origin_yaml
 from utils.xodr_post import postprocess_file
+from utils.carla_topology import DEFAULT_STUB_LEN, lane_graph_from_scenario, rebuild_file
 
 DEFAULT_RESAMPLE_STEP = 1.0
 PLAN_VIEW_MODES = ("param_poly3", "primitives")
@@ -89,17 +90,27 @@ def convert_scenario_to_xodr(scenario, output_path: Path, plan_view: str = PLAN_
     return converter
 
 
-def write_id_mapping(path: Path, old_ids: dict, converter) -> int:
-    """CSV: lanelet2_relation_id, commonroad_id, opendrive_road_id, opendrive_lane_id."""
+def write_id_mapping(path: Path, old_ids: dict, converter, extra_roads: dict | None = None) -> int:
+    """CSV: lanelet2_relation_id, commonroad_id, opendrive_road_id, opendrive_lane_id.
+
+    ``extra_roads`` = {new road id: (source road id, source lane id)} adds one row per junction
+    stub, attributed to the lanelet whose lane it duplicates (lane id -1 in the stub).
+    """
     cr_to_road = getattr(converter, "cr_id_to_od", {})
     cr_to_lane = getattr(converter, "lanelet_to_lane", {})
+    stubs_of: dict[tuple, list[str]] = {}
+    for new_id, (src_road, src_lane) in (extra_roads or {}).items():
+        stubs_of.setdefault((str(src_road), int(src_lane)), []).append(new_id)
     rows = 0
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["lanelet2_relation_id", "commonroad_id", "opendrive_road_id", "opendrive_lane_id"])
         for osm_id, cr_id in sorted(old_ids.items(), key=lambda kv: kv[1]):
-            w.writerow([osm_id, cr_id, cr_to_road.get(cr_id, ""), cr_to_lane.get(cr_id, "")])
+            road, lane = cr_to_road.get(cr_id, ""), cr_to_lane.get(cr_id, "")
+            w.writerow([osm_id, cr_id, road, lane])
             rows += 1
+            for stub in sorted(stubs_of.get((str(road), int(lane) if lane != "" else 0), []), key=int):
+                w.writerow([osm_id, cr_id, stub, -1])
     return rows
 
 
@@ -131,6 +142,11 @@ def main():
                         help="Single linear lane-width fit (crdesigner default) instead of one piece per sample")
     parser.add_argument("--no-merge-junctions", action="store_true",
                         help="Keep crdesigner's one-junction-per-incoming-road output")
+    parser.add_argument("--no-rebuild-junctions", action="store_true",
+                        help="Keep cr2odr's road links/junctions (merged) instead of rebuilding them "
+                             "from the lanelet graph for CARLA")
+    parser.add_argument("--stub-len", type=float, default=DEFAULT_STUB_LEN,
+                        help="Length of the junction stub roads created by the rebuild (m)")
     parser.add_argument("--no-validate", action="store_true", help="Skip the XML-level .xodr checks")
     parser.add_argument("--no-roundtrip", action="store_true",
                         help="Skip the xodr->CommonRoad round-trip comparison and overlay plot")
@@ -206,7 +222,13 @@ def main():
 
     # CommonRoad -> OpenDRIVE
     converter = convert_scenario_to_xodr(scenario, output_path, args.plan_view, not args.no_piecewise_width)
-    if not args.no_merge_junctions:
+    extra_roads = {}
+    if not args.no_rebuild_junctions:
+        edges = lane_graph_from_scenario(scenario, converter.cr_id_to_od, converter.lanelet_to_lane)
+        jstats = rebuild_file(output_path, edges, args.stub_len)
+        extra_roads = jstats.pop("stub_roads", {})
+        print(f"Junctions:      rebuilt from lanelet graph: {_fmt(jstats)}")
+    elif not args.no_merge_junctions:
         jstats = postprocess_file(output_path, merge=True)
         print(f"Junctions:      {_fmt(jstats)}")
     xodr_root = etree.parse(str(output_path)).getroot()
@@ -215,7 +237,7 @@ def main():
           f"geometries={len(xodr_root.findall('road/planView/geometry'))}")
 
     mapping_path = output_path.with_name(f"id_mapping_{stem}.csv")
-    rows = write_id_mapping(mapping_path, old_ids, converter)
+    rows = write_id_mapping(mapping_path, old_ids, converter, extra_roads)
     print(f"ID mapping:     {mapping_path} ({rows} lanelets)")
 
     # Verification (never fatal: the .xodr is already written)
