@@ -57,8 +57,14 @@ def _replace_lanelets(scenario: Scenario, lanelets: list[Lanelet]) -> LaneletNet
     (``_old_lanelet_ids``, set by crdesigner) are carried over.
     """
     old = scenario.lanelet_network
+    # ``Scenario.replace_lanelet_network`` erases the old network lanelet by lanelet, which
+    # strips the erased ids from the successor/predecessor lists of the *remaining* lanelet
+    # objects. Lanelets reused unchanged would therefore lose their links -> copy them.
+    shared = {id(la) for la in old.lanelets}
     new = LaneletNetwork()
     for la in lanelets:
+        if id(la) in shared:
+            la = _rebuild(la, la.left_vertices, la.center_vertices, la.right_vertices)
         new.add_lanelet(la)
     for sign in old.traffic_signs:
         new.add_traffic_sign(sign, set())
